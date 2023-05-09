@@ -4,3 +4,4 @@ pandas_ta
 plotly==5.14.1
 aiogram==2.25.1
 kaleido
+asyncio
