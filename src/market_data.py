@@ -7,21 +7,18 @@ import plotly.graph_objects as go
 class BinanceException(Exception):
     def __init__(self, status_code):
         self.status_code = status_code
-        message = f"🚨 Запрос к Binance API завершился с ошибкой {status_code}"
-        super().__init__(message)
+        super().__init__()
 
 
 class MarketData:
-    def __init__(self):
-        self.__base_url = "https://api.binance.com"
-        self.__pair = None
-        self.__cndl_df = None
-        self.__ind_df = None
+    __pair = None
+    __cndl_df = None
+    __ind_df = None
+    input_indicators = []
 
-    def get_possible_pairs(self):
-        end_point = "/api/v3/exchangeInfo"
-
-        url = self.__base_url + end_point
+    @staticmethod
+    def get_possible_pairs():
+        url = "https://api.binance.com/api/v3/exchangeInfo"
         req = requests.get(url)
         exchange_info = req.json()
 
@@ -33,13 +30,17 @@ class MarketData:
             raise BinanceException(req.status_code)
         return symbols_list
 
-    def init_candle_df(self, pair, timeframe):
-        end_point = "/api/v3/klines"
+    @classmethod
+    def init_candle_df(cls, pair, timeframe):
+        cls.__pair = pair
 
-        self.__pair = pair
-        url = self.__base_url + end_point
+        url = "https://api.binance.com/api/v3/klines"
+        params = {
+            "symbol": cls.__pair,
+            "interval": timeframe,
+            "limit": 300,
+        }
 
-        params = {"symbol": pair[0] + pair[1], "interval": timeframe, "limit": 300}
         req = requests.get(url, params=params)
 
         if req.status_code == 200:
@@ -47,11 +48,12 @@ class MarketData:
             cndl_df.columns = ["open_time", "open", "high", "low", "close", "volume"]
             cndl_df["open_time"] = pd.to_datetime(cndl_df["open_time"], unit="ms")
             cndl_df[cndl_df.columns[1:6]] = cndl_df[cndl_df.columns[1:6]].astype(float)
-            self.__cndl_df = cndl_df
+            cls.__cndl_df = cndl_df
         else:
             raise BinanceException(req.status_code)
 
-    def init_indicators_df(self, indicators):
+    @classmethod
+    def init_indicators_df(cls):
         ind_df = pd.DataFrame()
         ind_dict = {
             "SMA": ta.sma,  # close
@@ -71,23 +73,23 @@ class MarketData:
             "BB": ta.bbands,  # close
         }
 
-        for ind in indicators:
+        for ind in cls.input_indicators:
             ind_func = ind_dict[ind]
             if ind in {"SO", "ATR"}:
                 args = [
-                    self.__cndl_df["high"],
-                    self.__cndl_df["low"],
-                    self.__cndl_df["close"],
+                    cls.__cndl_df["high"],
+                    cls.__cndl_df["low"],
+                    cls.__cndl_df["close"],
                 ]
             elif ind in {"AD", "CMF"}:
                 args = [
-                    self.__cndl_df["high"],
-                    self.__cndl_df["low"],
-                    self.__cndl_df["close"],
-                    self.__cndl_df["volume"],
+                    cls.__cndl_df["high"],
+                    cls.__cndl_df["low"],
+                    cls.__cndl_df["close"],
+                    cls.__cndl_df["volume"],
                 ]
             else:
-                args = [self.__cndl_df["close"]]
+                args = [cls.__cndl_df["close"]]
 
             func_val = ind_func(*args)
             if isinstance(func_val, pd.DataFrame):
@@ -96,9 +98,10 @@ class MarketData:
             else:
                 ind_df[ind] = ind_func(*args)
 
-        self.__ind_df = ind_df
+        cls.__ind_df = ind_df
 
-    def get_charts_list(self):
+    @classmethod
+    def get_charts_list(cls):
         figures = {
             "candlestick": go.Figure(),
             "high": go.Figure(),
@@ -108,24 +111,24 @@ class MarketData:
 
         figures["candlestick"].add_trace(
             go.Candlestick(
-                x=self.__cndl_df["open_time"],
-                open=self.__cndl_df["open"],
-                high=self.__cndl_df["high"],
-                low=self.__cndl_df["low"],
-                close=self.__cndl_df["close"],
+                x=cls.__cndl_df["open_time"],
+                open=cls.__cndl_df["open"],
+                high=cls.__cndl_df["high"],
+                low=cls.__cndl_df["low"],
+                close=cls.__cndl_df["close"],
                 name="Свеча",
             )
         )
 
-        min_price = self.__cndl_df["low"].min()
+        min_price = cls.__cndl_df["low"].min()
         indicators = {"candlestick": [], "high": [], "medium": [], "low": []}
 
-        for ind in self.__ind_df.columns:
+        for ind in cls.__ind_df.columns:
             if ind == "AD":
                 figures[ind], indicators[ind] = go.Figure(), [ind]
                 figures[ind].add_trace(
                     go.Scatter(
-                        x=self.__cndl_df["open_time"], y=self.__ind_df[ind], name=ind
+                        x=cls.__cndl_df["open_time"], y=cls.__ind_df[ind], name=ind
                     )
                 )
 
@@ -137,7 +140,7 @@ class MarketData:
             ):
                 figures["low"].add_trace(
                     go.Scatter(
-                        x=self.__cndl_df["open_time"], y=self.__ind_df[ind], name=ind
+                        x=cls.__cndl_df["open_time"], y=cls.__ind_df[ind], name=ind
                     )
                 )
                 indicators["low"].append(ind)
@@ -145,15 +148,15 @@ class MarketData:
             elif ind == "ATR" or ind.startswith("MACD"):
                 figures["medium"].add_trace(
                     go.Scatter(
-                        x=self.__cndl_df["open_time"], y=self.__ind_df[ind], name=ind
+                        x=cls.__cndl_df["open_time"], y=cls.__ind_df[ind], name=ind
                     )
                 )
                 indicators["medium"].append(ind)
 
-            elif self.__ind_df[ind].max() < min_price:
+            elif cls.__ind_df[ind].max() < min_price:
                 figures["high"].add_trace(
                     go.Scatter(
-                        x=self.__cndl_df["open_time"], y=self.__ind_df[ind], name=ind
+                        x=cls.__cndl_df["open_time"], y=cls.__ind_df[ind], name=ind
                     )
                 )
                 indicators["high"].append(ind)
@@ -161,7 +164,7 @@ class MarketData:
             else:
                 figures["candlestick"].add_trace(
                     go.Scatter(
-                        x=self.__cndl_df["open_time"], y=self.__ind_df[ind], name=ind
+                        x=cls.__cndl_df["open_time"], y=cls.__ind_df[ind], name=ind
                     )
                 )
                 indicators["candlestick"].append(ind)
@@ -173,12 +176,12 @@ class MarketData:
         for key, value in figures.items():
             if key == "candlestick":
                 value.update_layout(
-                    title_text=f"Цена {self.__pair[0]} / {self.__pair[1]}",
+                    title_text=f"{cls.__pair}",
                     title_font_size=20,
                 )
                 if len(str_indicators["candlestick"]):
                     value.update_layout(
-                        title_text=f"Цена {self.__pair[0]} / {self.__pair[1]} и {str_indicators[key]}"
+                        title_text=f"{cls.__pair} и {str_indicators[key]}"
                     )
 
             elif len(value.data):
