@@ -26,8 +26,8 @@ async def main():
     bot = Bot(token=token)
     dp = Dispatcher(bot, storage=MemoryStorage())
 
-    register_handlers(dp)
     create_table()
+    register_handlers(dp)
 
     await set_commands(bot)
     await dp.skip_updates()
