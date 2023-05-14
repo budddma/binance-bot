@@ -2,7 +2,7 @@ from aiogram import Dispatcher, types
 from market_data import MarketData, BinanceException
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from database import insert_into_table, get_usernames, get_user_data
+from database import get_usernames, insert_into_table, get_user_data
 
 AVAILABLE_TIMEFRAMES = ("1 минута", "1 час", "1 день", "1 неделя", "1 месяц")
 AVAILABLE_INDICATORS = (
@@ -33,58 +33,61 @@ class DialogStates(StatesGroup):
 
 async def process_start(message: types.Message, state: FSMContext):
     await state.reset_state()
+    MarketData.input_indicators = []
     start_message = """
-    Приветствую, уважаемый\! Этот бот построит вам график свечей и индикаторов для выбранной валютной пары\. \n
-    Запросы каждого пользователя запоминаются и могут быть получены при попытке построить новый график
-    командой `\/new_chart`\. \n
-    Обратите внимание, что `\/start` и `\/new_chart` сбрасывают не до конца введённые данные
+    Приветствую, уважаемый! Этот бот построит вам график свечей и индикаторов для выбранной валютной пары. Запросы каждого пользователя сохраняются и могут быть восстановлены при попытке построить новый график командой /new_chart
     """
     await message.answer(
-        start_message, reply_markup=types.ReplyKeyboardRemove(), parse_mode="MarkdownV2"
+        start_message,
+        reply_markup=types.ReplyKeyboardRemove(),
     )
 
 
 async def process_new_chart(message: types.Message, state: FSMContext):
     await state.reset_state()
+    MarketData.input_indicators = []
     await state.set_state(DialogStates.process_pair.state)
-
     await check_user(message, state)
 
 
 async def check_user(message: types.Message, state: FSMContext):
-    user = message.from_user
+    username = message.from_user.username
     async with state.proxy() as data:
-        data["username"] = user.username
+        data["username"] = username
 
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     buttons = ["МОЖЕМ ПОВТОРИТЬ", "Введу заново"]
     keyboard.add(*buttons)
 
-    if user.username in get_usernames():
+    if username in get_usernames():
         user_data = get_user_data(message.from_user.username)
         await message.answer(
-            f"Давно тебя не было в уличных гонках, {user.username}. Использовать последние введённые данные?\n"
+            f"Давно тебя не было в уличных гонках, {username}. Использовать последние введённые данные?\n"
             f"Пара: {user_data[0]}\n"
             f"Таймфрейм: {user_data[1]}\n"
             f"Индикаторы: {user_data[2]}",
             reply_markup=keyboard,
         )
-
         await state.set_state(DialogStates.choose_data.state)
 
-
-async def choose_data(message: types.Message, state: FSMContext):
-    if (
-        message.from_user.username not in get_usernames()
-        or message.text.upper().strip() != "МОЖЕМ ПОВТОРИТЬ"
-    ):
+    else:
         await message.answer(
             "Для начала отправьте мне валютную пару в формате: \nBTCUSDT",
             reply_markup=types.ReplyKeyboardRemove(),
         )
         await state.set_state(DialogStates.process_pair.state)
-    else:
+
+
+async def choose_data(message: types.Message, state: FSMContext):
+    if message.text.upper().strip() == "МОЖЕМ ПОВТОРИТЬ":
         await plot_charts(message, state)
+
+    else:
+        await message.answer(
+            "Для начала отправьте мне валютную пару в формате: \nBTCUSDT",
+            reply_markup=types.ReplyKeyboardRemove(),
+        )
+        await state.set_state(DialogStates.process_pair.state)
 
 
 async def plot_charts(message: types.Message, state: FSMContext):
@@ -103,12 +106,19 @@ async def plot_charts(message: types.Message, state: FSMContext):
     except BinanceException as e:
         print(f"🚨 Запрос к Binance API завершился с ошибкой {e.status_code}")
 
-    MarketData.input_indicators = args[2].split(", ")
-    MarketData.init_indicators_df()
+    if args[2]:
+        MarketData.input_indicators = args[2].split(", ")
+        MarketData.init_indicators_df()
 
-    for chart in MarketData.get_charts_list():
-        await message.answer_photo(chart.to_image(format="png"))
+        for chart in MarketData.get_charts_list():
+            await message.answer_photo(chart.to_image(format="png"))
 
+    else:
+        await message.answer_photo(
+            MarketData.get_only_candlestick().to_image(format="png")
+        )
+
+    MarketData.input_indicators = []
     await state.reset_state()
 
 
@@ -198,15 +208,19 @@ async def process_indicators(message: types.Message, state: FSMContext):
         async with state.proxy() as data:
             data["indicators"] = str_indicators
 
-        await message.answer(
-            f"Вы выбрали {str_indicators}", reply_markup=types.ReplyKeyboardRemove()
+        ans = (
+            f"Вы выбрали {str_indicators}"
+            if str_indicators
+            else "Вы не выбрали индикаторов"
         )
+
+        await message.answer(ans, reply_markup=types.ReplyKeyboardRemove())
 
         await insert_into_table(state)
         await plot_charts(message, state)
 
 
-async def send_sticker(message: types.Message):
+async def send_goida(message: types.Message):
     sticker_id = (
         "CAACAgIAAxkBAAEI7N9kWpMHrwxSnoCv97Wj7Xr8N04EoQACJRMAAkKvaQABFKxDSf9OkD8vBA"
     )
@@ -222,4 +236,4 @@ def register_handlers(dp: Dispatcher):
     dp.register_message_handler(
         process_indicators, state=DialogStates.process_indicators
     )
-    dp.register_message_handler(send_sticker, commands="goida")
+    dp.register_message_handler(send_goida, commands="goida")
