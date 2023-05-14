@@ -200,3 +200,27 @@ class MarketData:
             if len(fig.data):
                 figures_list.append(fig)
         return figures_list
+
+    @classmethod
+    def get_only_candlestick(cls):
+        fig = go.Figure()
+        fig.add_trace(
+            go.Candlestick(
+                x=cls.__cndl_df["open_time"],
+                open=cls.__cndl_df["open"],
+                high=cls.__cndl_df["high"],
+                low=cls.__cndl_df["low"],
+                close=cls.__cndl_df["close"],
+                name="Свеча",
+            )
+        )
+
+        fig.update_layout(
+            title_text=f"{cls.__pair}",
+            title_font_size=20,
+            yaxis_title="Стоимость",
+            xaxis_rangeslider_visible=False,
+            plot_bgcolor="rgba(210,210,210,1)",
+        )
+
+        return fig
